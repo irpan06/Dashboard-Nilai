@@ -816,7 +816,7 @@ def display_login_form():
                             st.error("Gagal menarik data transkrip. Sesi mungkin berakhir.")
                     else:
                         # Jika gagal, tampilkan alasan (jika ada di HTML)
-                        soup_err = BeautifulSoup(response.text, "html.parser")
+                        soup_err = BeautifulSoup(login_resp.text, "html.parser")
                         err_msg = soup_err.find("div", {"style": "color: red;"}) # Cek tag error di HTML
                         msg = err_msg.get_text() if err_msg else "NIM, Password, atau Captcha Salah."
                         
