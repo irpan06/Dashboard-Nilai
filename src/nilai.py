@@ -626,123 +626,202 @@ def display_main_app():
 
 # --- Fungsi untuk menampilkan form login ---
 def display_login_form():
+    # 1. Pastikan Session tetap hidup dan tidak berubah
+    if 'session' not in st.session_state:
+        st.session_state.session = requests.Session()
+        st.session_state.session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://mahasiswa.unair.ac.id/"
+        })
+    
+    session = st.session_state.session
+    base_url = "https://mahasiswa.unair.ac.id/"
+
+    # 2. Fungsi untuk mengambil Token & Captcha (Hanya dipanggil jika belum ada)
+    def fetch_security_data():
+        try:
+            resp = session.get(base_url, timeout=15)
+            soup = BeautifulSoup(resp.text, "html.parser")
+            
+            # Ambil CSRF Token (Sesuai HTML: name="csrf_token")
+            token_el = soup.find("input", {"name": "csrf_token"})
+            token = token_el.get("value", "") if token_el else ""
+            
+            # Ambil URL Gambar Captcha (Sesuai HTML: alt="captcha")
+            img_tag = soup.find("img", {"alt": "captcha"})
+            captcha_bytes = None
+            if img_tag:
+                c_src = img_tag.get("src")
+                c_url = base_url + c_src if not c_src.startswith("http") else c_src
+                # Header Accept agar server tahu kita minta gambar
+                c_resp = session.get(c_url, headers={"Accept": "image/*"}, timeout=10)
+                if "image" in c_resp.headers.get("Content-Type", ""):
+                    captcha_bytes = c_resp.content
+            
+            return token, captcha_bytes
+        except Exception as e:
+            st.error(f"Gagal menghubungi server Unair: {e}")
+            return "", None
+
+    # Inisialisasi data keamanan jika belum ada
+    if 'login_token' not in st.session_state or st.session_state.login_token == "":
+        t, c = fetch_security_data()
+        st.session_state.login_token = t
+        st.session_state.captcha_bytes = c
+
+    # --- TAMPILAN FORM ---
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         with st.form(key="autentifikasi"):
-            st.title("Login Cyber", help="Program tidak akan menyimpan apapun kok 😊")
+            st.title("Login Cyber", help="NIM dan Password Anda tidak disimpan.")
             input_nim = st.text_input(label="NIM")
             input_pw = st.text_input(label="Password", type="password")
-            input_button = st.form_submit_button("Login")
+            
+            # Tampilkan Gambar Captcha
+            if st.session_state.captcha_bytes:
+                st.image(st.session_state.captcha_bytes, caption="Masukkan kode di atas")
+            else:
+                st.warning("Gagal memuat Captcha. Silakan muat ulang halaman.")
+            
+            input_captcha = st.text_input(label="Kode Captcha")
+            input_button = st.form_submit_button("Masuk")
+
+        # Tombol manual jika captcha tidak terbaca
+        if st.button("🔄 Ganti Captcha Baru"):
+            st.session_state.login_token = ""
+            st.rerun()
 
         if input_button:
-            with st.spinner("Mencoba login dan mengambil data transkrip..."):
+            if not input_captcha:
+                st.warning("Harap isi kode captcha.")
+                return
+
+            with st.spinner("Memproses login..."):
                 try:
-                    session = requests.Session()
-                    login_url = "https://mahasiswa.unair.ac.id/login.php"
-                    transkrip_url = "https://mahasiswa.unair.ac.id/modul/mhs/akademik-transkrip.php"
-                    transkrip_url_alum = "https://mahasiswa.unair.ac.id/modul/alumni/akademik-transkrip.php"
-                    payload = {"mode": "login", "username": input_nim, "password": input_pw}
-                    session.post(login_url, data=payload)
-                    login_resp = session.post(login_url, data=payload)
+                    # Payload harus lengkap sesuai struktur <form> di HTML Unair
+                    payload = {
+                        "mode": "login",
+                        "username": input_nim,
+                        "password": input_pw,
+                        "csrf_token": st.session_state.login_token,
+                        "captcha": input_captcha
+                    }
+                    
+                    # Login POST (HANYA SEKALI)
+                    login_resp = session.post(f"{base_url}login.php", data=payload)
+                    
+                    # Cek apakah login berhasil
+                    if "Histori Nilai" in login_resp.text or "Biodata" in login_resp.text:
+                        # Identifikasi URL (Mahasiswa vs Alumni)
+                        trans_url = f"{base_url}modul/mhs/akademik-transkrip.php"
+                        if "Alumni" in login_resp.text or input_nim.startswith("A"):
+                            trans_url = f"{base_url}modul/alumni/akademik-transkrip.php"
+                        
+                        # Ambil data transkrip
+                        transkrip_resp = session.get(trans_url)
 
-                    if "Alumni" in login_resp.text or input_nim.startswith("A"):
-                        transkrip_url = transkrip_url_alum
+                        if "Histori Nilai" in transkrip_resp.text:
+                            soup = BeautifulSoup(transkrip_resp.text, "html.parser")
+                            tables = soup.find_all("table")
 
-                    transkrip_resp = session.get(transkrip_url)
+                            # --- LOGIKA EKSTRAKSI AKUN YANG DIPERBARUI ---
+                            user_info = {}
+                            info_table = None
+                            for table in tables:
+                                # Cari tabel yang kemungkinan besar berisi info mahasiswa
+                                if "NAMA" in table.get_text().upper() and "NIM" in table.get_text().upper():
+                                    info_table = table
+                                    break
 
-                    if "Histori Nilai" in transkrip_resp.text:
-                        soup = BeautifulSoup(transkrip_resp.text, "html.parser")
-                        tables = soup.find_all("table")
+                            if info_table:
+                                rows = info_table.find_all("tr")
+                                for row in rows:
+                                    cols = row.find_all("td")
+                                    # Loop melalui setiap sel untuk mencari kunci informasi
+                                    for i, col in enumerate(cols):
+                                        key = col.get_text(strip=True)
+                                        # Periksa apakah ini adalah kunci yang kita cari
+                                        if "Nama" in key and i + 1 < len(cols):
+                                            value = cols[i + 1].get_text(strip=True)
+                                            # Bersihkan nilai dari karakter ':'
+                                            if value.startswith(":"):
+                                                value = value[1:].strip()
+                                            user_info["Nama Lengkap"] = value
 
-                        # --- LOGIKA EKSTRAKSI AKUN YANG DIPERBARUI ---
-                        user_info = {}
-                        info_table = None
-                        for table in tables:
-                            # Cari tabel yang kemungkinan besar berisi info mahasiswa
-                            if "NAMA" in table.get_text().upper() and "NIM" in table.get_text().upper():
-                                info_table = table
-                                break
+                                        if "NIM" in key and i + 1 < len(cols):
+                                            value = cols[i + 1].get_text(strip=True)
+                                            if value.startswith(":"):
+                                                value = value[1:].strip()
+                                            user_info["NIM"] = value
 
-                        if info_table:
-                            rows = info_table.find_all("tr")
+                            st.session_state.user_info = user_info
+
+                            def table_has_keywords(table, keywords=("SEMESTER", "NAMA MATA AJAR", "NILAI")):
+                                text = " ".join(th.get_text(" ", strip=True).upper() for th in table.find_all(["th", "td"])[:10])
+                                return any(k in text for k in keywords)
+
+                            target_idx = None
+                            for i, table in enumerate(tables):
+                                if table_has_keywords(table):
+                                    target_idx = i
+                                    break
+
+                            if target_idx is None:
+                                st.error("Tabel nilai tidak ditemukan.")
+                                return
+
+                            target = tables[target_idx]
+                            rows = target.find_all("tr")
+
+                            data = []
                             for row in rows:
-                                cols = row.find_all("td")
-                                # Loop melalui setiap sel untuk mencari kunci informasi
-                                for i, col in enumerate(cols):
-                                    key = col.get_text(strip=True)
-                                    # Periksa apakah ini adalah kunci yang kita cari
-                                    if "Nama" in key and i + 1 < len(cols):
-                                        value = cols[i + 1].get_text(strip=True)
-                                        # Bersihkan nilai dari karakter ':'
-                                        if value.startswith(":"):
-                                            value = value[1:].strip()
-                                        user_info["Nama Lengkap"] = value
+                                cols = row.find_all(["th", "td"])
+                                text_cols = [c.get_text(" ", strip=True) for c in cols]
+                                if any(cell.strip() for cell in text_cols):
+                                    data.append(text_cols)
 
-                                    if "NIM" in key and i + 1 < len(cols):
-                                        value = cols[i + 1].get_text(strip=True)
-                                        if value.startswith(":"):
-                                            value = value[1:].strip()
-                                        user_info["NIM"] = value
+                            header = data[0]
+                            data_rows = data[1:]
 
-                        st.session_state.user_info = user_info
+                            def semester_key(semester_str):
+                                if not semester_str or "/" not in semester_str:
+                                    return (0, 0)
+                                try:
+                                    tahun_awal = int(semester_str.split("/")[0].strip())
+                                except ValueError:
+                                    tahun_awal = 0
+                                jenis = "Ganjil" if "Ganjil" in semester_str else "Genap"
+                                urutan = 0 if jenis == "Ganjil" else 1
+                                return (tahun_awal, urutan)
 
-                        def table_has_keywords(table, keywords=("SEMESTER", "NAMA MATA AJAR", "NILAI")):
-                            text = " ".join(th.get_text(" ", strip=True).upper() for th in table.find_all(["th", "td"])[:10])
-                            return any(k in text for k in keywords)
+                            data_rows.sort(key=lambda r: semester_key(r[0]))
 
-                        target_idx = None
-                        for i, table in enumerate(tables):
-                            if table_has_keywords(table):
-                                target_idx = i
-                                break
+                            wb = Workbook()
+                            ws = wb.active
+                            ws.title = "Transkrip Nilai"
+                            ws.append(header)
+                            for row in data_rows[3:]:
+                                ws.append(row)
 
-                        if target_idx is None:
-                            st.error("Tabel nilai tidak ditemukan.")
-                            return
+                            excel_buffer = BytesIO()
+                            wb.save(excel_buffer)
+                            excel_buffer.seek(0)
 
-                        target = tables[target_idx]
-                        rows = target.find_all("tr")
+                            st.session_state.df = pd.read_excel(excel_buffer)
+                            st.session_state.logged_in = True
+                            st.success("Login berhasil!")
+                            st.rerun()
 
-                        data = []
-                        for row in rows:
-                            cols = row.find_all(["th", "td"])
-                            text_cols = [c.get_text(" ", strip=True) for c in cols]
-                            if any(cell.strip() for cell in text_cols):
-                                data.append(text_cols)
-
-                        header = data[0]
-                        data_rows = data[1:]
-
-                        def semester_key(semester_str):
-                            if not semester_str or "/" not in semester_str:
-                                return (0, 0)
-                            try:
-                                tahun_awal = int(semester_str.split("/")[0].strip())
-                            except ValueError:
-                                tahun_awal = 0
-                            jenis = "Ganjil" if "Ganjil" in semester_str else "Genap"
-                            urutan = 0 if jenis == "Ganjil" else 1
-                            return (tahun_awal, urutan)
-
-                        data_rows.sort(key=lambda r: semester_key(r[0]))
-
-                        wb = Workbook()
-                        ws = wb.active
-                        ws.title = "Transkrip Nilai"
-                        ws.append(header)
-                        for row in data_rows[3:]:
-                            ws.append(row)
-
-                        excel_buffer = BytesIO()
-                        wb.save(excel_buffer)
-                        excel_buffer.seek(0)
-
-                        st.session_state.df = pd.read_excel(excel_buffer)
-                        st.session_state.logged_in = True
-                        st.success("Login berhasil!")
-                        st.rerun()
+                        else:
+                            st.error("Gagal menarik data transkrip. Sesi mungkin berakhir.")
                     else:
-                        st.error("Login gagal. Periksa kembali NIM dan Password Anda.")
+                        # Jika gagal, tampilkan alasan (jika ada di HTML)
+                        soup_err = BeautifulSoup(response.text, "html.parser")
+                        err_msg = soup_err.find("div", {"style": "color: red;"}) # Cek tag error di HTML
+                        msg = err_msg.get_text() if err_msg else "NIM, Password, atau Captcha Salah."
+                        
+                        st.error(f"Login Gagal: {msg}")
+                        # Jangan rerun otomatis agar user bisa melihat pesan errornya
                 except requests.exceptions.RequestException as e:
                     st.error(f"Terjadi kesalahan koneksi: {e}")
 
