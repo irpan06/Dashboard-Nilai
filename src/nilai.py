@@ -285,8 +285,19 @@ def display_main_app():
         st.sidebar.subheader(f"👤 {nama}")
 
     if st.sidebar.button("Logout"):
+        # 1. Reset status login
         st.session_state.logged_in = False
         st.session_state.df = None
+        
+        # 2. Hapus info user sebelumnya
+        if "user_info" in st.session_state:
+            st.session_state.user_info = None
+        
+        # 3. KOSONGKAN token dan captcha agar otomatis ambil yang baru saat masuk ke login form
+        st.session_state.login_token = ""
+        st.session_state.captcha_bytes = None
+        
+        # 4. Jalankan ulang aplikasi
         st.rerun()
 
     st.sidebar.write("")
@@ -670,6 +681,10 @@ def display_login_form():
         st.session_state.captcha_bytes = c
 
     # --- TAMPILAN FORM ---
+    # Tampilkan pesan error jika ada dari percobaan sebelumnya
+    if "login_error_msg" in st.session_state:
+        st.error(st.session_state.login_error_msg)
+        del st.session_state.login_error_msg # Hapus agar tidak muncul terus menerus
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         with st.form(key="autentifikasi"):
@@ -815,13 +830,19 @@ def display_login_form():
                         else:
                             st.error("Gagal menarik data transkrip. Sesi mungkin berakhir.")
                     else:
-                        # Jika gagal, tampilkan alasan (jika ada di HTML)
+                        # Jika gagal, ambil alasan errornya
                         soup_err = BeautifulSoup(login_resp.text, "html.parser")
-                        err_msg = soup_err.find("div", {"style": "color: red;"}) # Cek tag error di HTML
+                        err_msg = soup_err.find("div", {"style": "color: red;"}) 
                         msg = err_msg.get_text() if err_msg else "NIM, Password, atau Captcha Salah."
                         
-                        st.error(f"Login Gagal: {msg}")
-                        # Jangan rerun otomatis agar user bisa melihat pesan errornya
+                        # 1. Simpan pesan error ke session state agar tetap muncul setelah rerun
+                        st.session_state.login_error_msg = f"Login Gagal: {msg}"
+                        
+                        # 2. HAPUS token agar sistem mengambil captcha baru saat rerun
+                        st.session_state.login_token = ""
+                        
+                        # 3. Memicu rerun untuk menampilkan captcha baru
+                        st.rerun()
                 except requests.exceptions.RequestException as e:
                     st.error(f"Terjadi kesalahan koneksi: {e}")
 
