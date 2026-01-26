@@ -2,12 +2,15 @@
 __author__ = "irr"
 __version__ = "1.0.0"
 
+import re
+import time
 import requests
 from bs4 import BeautifulSoup
 from openpyxl import Workbook
 from io import BytesIO
 from decimal import Decimal, ROUND_HALF_UP
 from difflib import SequenceMatcher
+from streamlit_option_menu import option_menu
 
 import streamlit as st
 import pandas as pd
@@ -32,6 +35,31 @@ NILAI_MAP = {
     "E": 0.0,
 }
 
+def local_css():
+    st.markdown("""
+    <style>
+        /* Mempercantik Container Target */
+        .target-card {
+            background-color: #f0f2f6;
+            padding: 15px;
+            border-radius: 10px;
+            border-left: 5px solid #ff4b4b;
+            margin-bottom: 10px;
+        }
+        .success-card {
+            border-left: 5px solid #28a745 !important;
+        }
+        /* Menghilangkan Padding Berlebih di Sidebar */
+        .css-1d391kg {padding-top: 1rem;} 
+        /* Style untuk Status Log */
+        .log-box {
+            font-family: 'Courier New', monospace;
+            padding: 5px;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+    </style>
+    """, unsafe_allow_html=True)
 
 def display_main_app():
     def hitung_jatah_sks(ips):
@@ -275,30 +303,29 @@ def display_main_app():
     # ==============================================================================
     # TATA LETAK APLIKASI STREAMLIT
     # ==============================================================================
-    st.set_page_config(layout="centered")
-    st.sidebar.title("🏛️ Our Campus")
+    # st.sidebar.title("🏛️ Our Campus")
 
-    if "user_info" in st.session_state and st.session_state.user_info:
-        user_info = st.session_state.user_info
-        nama = user_info.get("Nama Lengkap", "Tidak Ditemukan")
-        st.sidebar.subheader("")
-        st.sidebar.subheader(f"👤 {nama}")
+    # if "user_info" in st.session_state and st.session_state.user_info:
+    #     user_info = st.session_state.user_info
+    #     nama = user_info.get("Nama Lengkap", "Tidak Ditemukan")
+    #     st.sidebar.subheader("")
+    #     st.sidebar.subheader(f"👤 {nama}")
 
-    if st.sidebar.button("Logout"):
-        # 1. Reset status login
-        st.session_state.logged_in = False
-        st.session_state.df = None
+    # if st.sidebar.button("Logout"):
+    #     # 1. Reset status login
+    #     st.session_state.logged_in = False
+    #     st.session_state.df = None
         
-        # 2. Hapus info user sebelumnya
-        if "user_info" in st.session_state:
-            st.session_state.user_info = None
+    #     # 2. Hapus info user sebelumnya
+    #     if "user_info" in st.session_state:
+    #         st.session_state.user_info = None
         
-        # 3. KOSONGKAN token dan captcha agar otomatis ambil yang baru saat masuk ke login form
-        st.session_state.login_token = ""
-        st.session_state.captcha_bytes = None
+    #     # 3. KOSONGKAN token dan captcha agar otomatis ambil yang baru saat masuk ke login form
+    #     st.session_state.login_token = ""
+    #     st.session_state.captcha_bytes = None
         
-        # 4. Jalankan ulang aplikasi
-        st.rerun()
+    #     # 4. Jalankan ulang aplikasi
+    #     st.rerun()
 
     st.sidebar.write("")
     pilihan_semester = st.sidebar.selectbox("Pilih Semester:", options=list_semester)
@@ -634,6 +661,333 @@ def display_main_app():
                         grid_options_wajib = gb_wajib.build()
                         AgGrid(df_sem, gridOptions=grid_options_wajib, fit_columns_on_grid_load=True, theme="balham")
 
+def display_sniper_page():
+    # Konfigurasi Batas Log
+    MAX_LOG_LINES = 100 
+
+    # CSS STYLE (Final Version)
+    st.markdown("""
+    <style>
+        .terminal-container {
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            background-color: #1e2329; 
+            color: #e6edf3; 
+            padding: 5px 0;
+            border-radius: 10px;
+            border: 1px solid #30363d;
+            height: 550px; 
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .terminal-line {
+            font-size: 16px;
+            padding: 0 20px;
+            border-bottom: 1px solid #2b303b; 
+            display: flex;
+            align-items: center; 
+            justify-content: flex-start; 
+            min-height: 50px; 
+            line-height: 1.5;
+            gap: 15px; 
+        }
+        .terminal-line:hover { background-color: #2b303b; }
+        
+        .ts { 
+            color: #8b949e; 
+            font-size: 13px;
+            min-width: 70px; 
+            font-family: sans-serif;
+            opacity: 0.9;
+            flex-shrink: 0; 
+        }
+        
+        .target { 
+            color: #58a6ff; 
+            font-weight: 700;
+            font-size: 18px;
+            white-space: nowrap;       
+            overflow: hidden;          
+            text-overflow: ellipsis;   
+            max-width: 320px; 
+            display: block;
+        }
+
+        .target-class {
+            font-weight: normal; 
+            opacity: 0.7; 
+            font-size: 16px;
+        }
+        
+        .status-badge {
+            font-size: 14px;
+            padding: 6px 14px;
+            border-radius: 8px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            display: inline-flex;
+            align-items: center;
+            flex-shrink: 0; 
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            white-space: nowrap;
+        }
+        
+        .stat-full { color: #ff7b72; background: rgba(255, 123, 114, 0.15); border: 1px solid rgba(255, 123, 114, 0.3); } 
+        .stat-ok { color: #3fb950; background: rgba(63, 185, 80, 0.15); border: 1px solid rgba(63, 185, 80, 0.3); } 
+        .stat-wait { color: #d29922; background: rgba(210, 153, 34, 0.15); border: 1px solid rgba(210, 153, 34, 0.3); } 
+        
+        .success-container {
+            background-color: #f6f8fa;
+            border: 1px solid #d0d7de;
+            border-radius: 10px;
+            padding: 15px;
+            height: 550px; 
+            overflow-y: auto;
+        }
+        .success-item {
+            background-color: #ffffff;
+            padding: 15px 18px;
+            border-radius: 8px;
+            border-left: 6px solid #2da44e;
+            margin-bottom: 12px;
+            font-size: 15px;
+            color: #24292f;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+
+        .live-dot { color: #3fb950; animation: blinker 1.5s ease-in-out infinite; font-size: 22px; vertical-align: sub; margin-right: 8px;}
+        @keyframes blinker { 50% { opacity: 0.3; } }
+        
+        ::-webkit-scrollbar { width: 10px; height: 10px; }
+        ::-webkit-scrollbar-thumb { background: #484f58; border-radius: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    c_title, c_live = st.columns([5, 2])
+    with c_title:
+        st.title("︻デ═一 KRS Sniper")
+    with c_live:
+        if st.session_state.get('sniper_running'):
+            st.markdown("<div style='text-align:right; padding-top:15px; font-size:18px; font-weight:bold;'><span class='live-dot'>●</span>RUNNING</div>", unsafe_allow_html=True)
+
+    # Inisialisasi State
+    if 'sniper_targets' not in st.session_state: st.session_state.sniper_targets = []
+    if 'sniper_running' not in st.session_state: st.session_state.sniper_running = False
+    if 'log_history' not in st.session_state: st.session_state.log_history = []
+    if 'success_history' not in st.session_state: st.session_state.success_history = []
+    
+    # State Interval (Default 2 Detik)
+    if 'sniper_interval' not in st.session_state: st.session_state.sniper_interval = 2.0
+
+    # UI Input Target
+    if not st.session_state.sniper_running:
+        with st.container(border=True):
+            c1, c2, c3 = st.columns([3, 1, 1])
+            with c1:
+                new_mk = st.text_input("Nama Mata Kuliah", placeholder="Misal: Biofotonik", label_visibility="collapsed")
+            with c2:
+                new_kls = st.text_input("Kelas", placeholder="kelas", label_visibility="collapsed")
+            with c3:
+                if st.button("Tambah", use_container_width=True):
+                    if new_mk and new_kls:
+                        st.session_state.sniper_targets.append({"nama": new_mk, "kelas": new_kls})
+                        st.rerun()
+
+        if st.session_state.sniper_targets:
+            st.markdown("##### 🎯 Target Operasi")
+            for i, t in enumerate(st.session_state.sniper_targets):
+                col_text, col_del = st.columns([6, 1])
+                col_text.markdown(f"<div style='background:#f0f2f6; padding:10px 15px; border-radius:6px; font-size:16px;'><b>{i+1}. {t['nama']}</b> <span style='color:#666;'>({t['kelas']})</span></div>", unsafe_allow_html=True)
+                if col_del.button("✖", key=f"del_{i}", help="Hapus"):
+                    st.session_state.sniper_targets.pop(i)
+                    st.rerun()
+            
+            if st.session_state.log_history or st.session_state.success_history:
+                if st.button("Bersihkan Data", type="secondary"):
+                    st.session_state.log_history = []
+                    st.session_state.success_history = []
+                    st.rerun()
+
+    # KONTROL UTAMA & CONFIG
+    if st.session_state.sniper_targets or st.session_state.sniper_running:
+        st.markdown("---")
+        
+        # --- LOGIKA TOMBOL & SETTING JEDA ---
+        if not st.session_state.sniper_running:
+            # Layout: Kiri (Setting Jeda) - Kanan (Tombol Start)
+            col_conf, col_btn = st.columns([3, 2])
+            
+            with col_conf:
+                # 2. INPUT FIELD (Number Input) - Pengganti Slider
+                st.session_state.sniper_interval = st.number_input(
+                    "⏱️ Interval Jeda (Detik)", 
+                    min_value=0.1,  # Minimal 0.1 detik (Sangat Cepat)
+                    value=float(st.session_state.sniper_interval),
+                    step=0.5,       # Tombol +/- naik per 0.5 detik
+                    format="%.1f",  # Format desimal
+                    help="Masukkan angka bebas (contoh: 0.5 atau 60)"
+                )
+            
+            with col_btn:
+                # Spacer agar tombol sejajar dengan input
+                st.write("") 
+                st.write("")
+                if st.button("🚀 GASS", type="primary", use_container_width=True):
+                    st.session_state.sniper_running = True
+                    st.rerun()
+        else:
+            if st.button("🛑 STOP OPERASI", type="primary", use_container_width=True):
+                st.session_state.sniper_running = False
+                st.rerun()
+
+        # VIEW LOGS
+        col_log, col_result = st.columns([7, 3])
+        
+        with col_log:
+            st.caption(f"📺 Live Monitor")
+            log_container = st.empty()
+        
+        with col_result:
+            st.caption(f"🏆 Sukses ({len(st.session_state.success_history)})")
+            result_container = st.empty()
+
+        def render_views():
+            with log_container.container():
+                full_log_html = "".join(reversed(st.session_state.log_history))
+                st.markdown(f"<div class='terminal-container'>{full_log_html}</div>", unsafe_allow_html=True)
+            
+            with result_container.container():
+                items_html = ""
+                if not st.session_state.success_history:
+                    items_html = "<div style='color: #8b949e; text-align: center; padding-top: 60px; font-size: 15px; font-style: italic;'>Menunggu hasil tangkapan...</div>"
+                else:
+                    for item in reversed(st.session_state.success_history):
+                        items_html += f"""
+                        <div class="success-item">
+                            <div style="font-weight:700; color:#1a7f37; font-size:16px;">{item['nama']}</div>
+                            <div style="display:flex; justify-content:space-between; margin-top:5px;">
+                                <span style="font-size:13px; color:#57606a;">Kelas {item['kelas']}</span>
+                                <span style="font-size:13px; color:#57606a;">{item['waktu']}</span>
+                            </div>
+                        </div>
+                        """
+                st.markdown(f"<div class='success-container'>{items_html}</div>", unsafe_allow_html=True)
+
+        render_views()
+
+        if st.session_state.sniper_running:
+            while st.session_state.sniper_running and st.session_state.sniper_targets:
+                timestamp = time.strftime('%H:%M:%S')
+                new_logs = []
+
+                for target in st.session_state.sniper_targets[:]:
+                    sukses, status = eksekusi_sniper_otomatis(target['nama'], target['kelas'])
+                    
+                    s_class = "stat-wait"
+                    icon = "⏳"
+                    if sukses: 
+                        s_class = "stat-ok"
+                        icon = "✓"
+                        st.session_state.success_history.append({
+                            "nama": target['nama'],
+                            "kelas": target['kelas'],
+                            "waktu": timestamp
+                        })
+                    elif "PENUH" in status: 
+                        s_class = "stat-full"
+                        icon = "🔒"
+                    elif "SERVER_DOWN" in status: 
+                        s_class = "stat-full"
+                        icon = "⚡"
+                    
+                    log_line = f"""<div class="terminal-line"><span class="ts">{timestamp}</span><span class="target" title="{target['nama']}">{target['nama']} <span class="target-class">({target['kelas']})</span></span><span class="status-badge {s_class}">{icon} {status}</span></div>"""
+                    new_logs.append(log_line)
+
+                    if sukses:
+                        st.toast(f"Berhasil mengamankan {target['nama']}!", icon="🎉")
+                        st.session_state.sniper_targets.remove(target)
+                    if status == "SESSION_EXPIRED":
+                        st.session_state.sniper_running = False
+                        break
+
+                st.session_state.log_history.extend(new_logs)
+                if len(st.session_state.log_history) > MAX_LOG_LINES:
+                    st.session_state.log_history = st.session_state.log_history[-MAX_LOG_LINES:]
+
+                render_views()
+
+                if not st.session_state.sniper_targets:
+                    st.success("SEMUA TARGET SELESAI!")
+                    st.session_state.sniper_running = False
+                    break
+                
+                # 3. GUNAKAN VARIABLE JEDA DARI NUMBER INPUT
+                time.sleep(st.session_state.sniper_interval)
+# ==============================================================================
+# MODUL SNIPER (INTEGRASI)
+# ==============================================================================
+def eksekusi_sniper_otomatis(target_matkul, target_kelas):
+    # Gunakan sesi yang SUDAH LOGIN dari dashboard
+    session = st.session_state.session 
+    
+    # Update header wajib untuk KRS agar tombol muncul
+    session.headers.update({
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": "https://mahasiswa.unair.ac.id/modul/mhs/akademik-krs.php"
+    })
+
+    base_url = "https://mahasiswa.unair.ac.id/"
+    url_krs = base_url + "modul/mhs/proses/_akademik-krs_ditambah.php"
+    
+    try:
+        # 1. Pemanasan Sesi (Wajib)
+        session.get(base_url + "modul/mhs/akademik-krs.php", timeout=10)
+        
+        # 2. Request Tabel (Ambil SID langsung dari cookie session)
+        sid = session.cookies.get('PHPSESSID')
+        if not sid: return False, "SESSION_LOST"
+        
+        resp_view = session.post(url_krs, data={'aksi': 'tampil', 'sid': sid}, timeout=15)
+        
+        # --- Deteksi Error ---
+        if "salah kueri" in resp_view.text.lower(): return False, "SERVER_DOWN"
+        if "login.php" in resp_view.text: return False, "SESSION_EXPIRED"
+
+        soup = BeautifulSoup(resp_view.text, 'html.parser')
+        rows = soup.find_all('tr')
+        
+        found_in_table = False
+        
+        for row in rows:
+            cells = [c.get_text(strip=True).upper() for c in row.find_all(['td', 'th'])]
+            text_row = " ".join(cells)
+            
+            if target_matkul.upper() in text_row and target_kelas.upper() in text_row:
+                found_in_table = True
+                tombol = row.find('input', {'onclick': True})
+                
+                if tombol:
+                    # Ambil ID dan Tembak
+                    ids = re.findall(r'\d+', tombol['onclick'])
+                    if len(ids) >= 2:
+                        payload = {'aksi': 'input', 'kelas': ids[0], 'id_kur_mk': ids[1], 'sid': sid}
+                        res = session.post(url_krs, data=payload)
+                        if "berhasil" in res.text.lower():
+                            return True, "BERHASIL"
+                        return False, f"Gagal Simpan: {res.text[:30]}"
+                else:
+                    # Cek Kapasitas
+                    terisi = cells[5] if len(cells) > 5 else "?"
+                    kapasitas = cells[4] if len(cells) > 4 else "?"
+                    return False, f"PENUH ({terisi}/{kapasitas})"
+        
+        if not found_in_table: return False, "BELUM_MUNCUL"
+        return False, "FULL_NO_BUTTON"
+
+    except Exception as e:
+        return False, f"ERR: {str(e)[:20]}"
 
 # --- Fungsi untuk menampilkan form login ---
 def display_login_form():
@@ -857,8 +1211,54 @@ if "df" not in st.session_state:
 if "grid_key_counter" not in st.session_state:
     st.session_state.grid_key_counter = 0
 
-# --- Router utama ---
+# ==============================================================================
+# ROUTER UTAMA (UPDATE)
+# ==============================================================================
 if not st.session_state.logged_in:
     display_login_form()
 else:
-    display_main_app()
+    # Sidebar Configuration
+    with st.sidebar:
+        # 1. KARTU PROFIL (Menghilangkan duplikasi)
+        if "user_info" in st.session_state and st.session_state.user_info:
+            u_nama = st.session_state.user_info.get("Nama Lengkap", "Mahasiswa")
+            u_nim = st.session_state.user_info.get("NIM", "")
+            
+            # Menggunakan HTML sederhana agar rapi
+            st.markdown(f"""
+            <div style="background-color: #f0f2f6; padding: 15px; border-radius: 10px; margin-bottom: 20px;">
+                <h4 style="margin:0; font-size: 16px;">👤 {u_nama}</h4>
+                <p style="margin:0; font-size: 12px; color: grey;">{u_nim}</p>
+                <p style="margin:0; font-size: 12px; color: green;">● Online</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # 2. NAVIGASI MODERN (Pengganti Radio Button)
+        selected = option_menu(
+            menu_title=None, 
+            options=["Dashboard", "KRS Sniper"], 
+            icons=["bar-chart-line-fill", "crosshair"], 
+            menu_icon="cast", 
+            default_index=0,
+            styles={
+                "container": {"padding": "0!important", "background-color": "transparent"},
+                "icon": {"color": "#007bff", "font-size": "18px"}, 
+                "nav-link": {"font-size": "15px", "text-align": "left", "margin":"5px", "--hover-color": "#eee"},
+                "nav-link-selected": {"background-color": "#007bff"},
+            }
+        )
+
+    # Router Halaman
+    if selected == "Dashboard":
+        # PENTING: Pastikan display_main_app() kamu SUDAH BERSIH dari kode st.sidebar lama!
+        display_main_app() 
+        
+    elif selected == "KRS Sniper":
+        display_sniper_page()
+
+    # Tombol Logout Terpisah di Bawah
+    st.sidebar.markdown("---")
+    if st.sidebar.button("🚪 Logout Akun", use_container_width=True):
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.rerun()
