@@ -786,7 +786,7 @@ def display_sniper_page():
         with st.container(border=True):
             c1, c2, c3 = st.columns([3, 1, 1])
             with c1:
-                new_mk = st.text_input("Nama Mata Kuliah", placeholder="Misal: Biofotonik", label_visibility="collapsed")
+                new_mk = st.text_input("Nama Mata Kuliah", placeholder="Nama Matkul", label_visibility="collapsed")
             with c2:
                 new_kls = st.text_input("Kelas", placeholder="kelas", label_visibility="collapsed")
             with c3:
@@ -1220,18 +1220,19 @@ else:
     # Sidebar Configuration
     with st.sidebar:
         # 1. KARTU PROFIL (Menghilangkan duplikasi)
+        st.sidebar.title('🏛️ Our Campus') 
         if "user_info" in st.session_state and st.session_state.user_info:
             u_nama = st.session_state.user_info.get("Nama Lengkap", "Mahasiswa")
             u_nim = st.session_state.user_info.get("NIM", "")
             
             # Menggunakan HTML sederhana agar rapi
-            st.markdown(f"""
-            <div style="background-color: #f0f2f6; padding: 15px; border-radius: 10px; margin-bottom: 20px;">
-                <h4 style="margin:0; font-size: 16px;">👤 {u_nama}</h4>
-                <p style="margin:0; font-size: 12px; color: grey;">{u_nim}</p>
-                <p style="margin:0; font-size: 12px; color: green;">● Online</p>
-            </div>
-            """, unsafe_allow_html=True)
+            # st.markdown(f"""
+            # <div style="background-color: #f0f2f6; padding: 15px; border-radius: 10px; margin-bottom: 20px;">
+            #     <h4 style="margin:0; font-size: 16px;">👤 {u_nama}</h4>
+            #     <p style="margin:0; font-size: 12px; color: grey;">{u_nim}</p>
+            #     <p style="margin:0; font-size: 12px; color: green;">● Online</p>
+            # </div>
+            # """, unsafe_allow_html=True)
         
         # 2. NAVIGASI MODERN (Pengganti Radio Button)
         selected = option_menu(
@@ -1258,6 +1259,13 @@ else:
 
     # Tombol Logout Terpisah di Bawah
     st.sidebar.markdown("---")
+    st.sidebar.markdown(f"""
+    <div style="background-color: #f0f2f6; padding: 15px; border-radius: 10px; margin-bottom: 20px;">
+        <h4 style="margin:0; font-size: 16px;">👤 {u_nama}</h4>
+        <p style="margin:0; font-size: 12px; color: grey;">{u_nim}</p>
+        <p style="margin:0; font-size: 12px; color: green;">● Online</p>
+    </div>
+    """, unsafe_allow_html=True)
     if st.sidebar.button("🚪 Logout Akun", use_container_width=True):
         for key in list(st.session_state.keys()):
             del st.session_state[key]
